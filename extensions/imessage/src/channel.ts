@@ -23,6 +23,7 @@ import {
   createComputedAccountStatusAdapter,
   createDefaultChannelRuntimeState,
 } from "openclaw/plugin-sdk/status-helpers";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveIMessageAccount, type ResolvedIMessageAccount } from "./accounts.js";
 import { imessageMessageActions } from "./actions.js";
 import {
@@ -438,6 +439,28 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
       },
     },
     security: imessageSecurityAdapter,
+    threading: {
+      resolveReplyTransport: ({
+        cfg,
+        accountId,
+        replyToId,
+        currentMessageId,
+        replyToCurrent,
+        replyDelivery,
+      }) => {
+        const account = resolveIMessageAccount({ cfg, accountId });
+        if (account.config.actions?.reply === false) {
+          return { replyToId: null };
+        }
+        const existingReplyToId = normalizeOptionalString(replyToId);
+        // Queued replies carry the originating message separately from explicit reply targets.
+        const implicitReplyToId =
+          replyToCurrent === false || replyDelivery?.replyToMode === "off"
+            ? undefined
+            : normalizeOptionalString(currentMessageId);
+        return { replyToId: existingReplyToId ?? implicitReplyToId ?? null };
+      },
+    },
     outbound: {
       base: {
         deliveryMode: "direct",
