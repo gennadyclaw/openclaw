@@ -158,6 +158,8 @@ const imessageMessageAdapter = defineChannelMessageAdapter({
         accountId: ctx.accountId ?? undefined,
         deps: (ctx as typeof ctx & IMessageMessageContextExtras).deps,
         replyToId: ctx.replyToId ?? undefined,
+        assertDirectAdapterHandoff: ctx.assertDirectAdapterHandoff,
+        onPlatformSendDispatch: ctx.onPlatformSendDispatch,
         conversationReadOrigin: (ctx as typeof ctx & IMessageMessageContextExtras)
           .conversationReadOrigin,
       });
@@ -178,6 +180,8 @@ const imessageMessageAdapter = defineChannelMessageAdapter({
         accountId: ctx.accountId ?? undefined,
         deps: (ctx as typeof ctx & IMessageMessageContextExtras).deps,
         replyToId: ctx.replyToId ?? undefined,
+        assertDirectAdapterHandoff: ctx.assertDirectAdapterHandoff,
+        onPlatformSendDispatch: ctx.onPlatformSendDispatch,
         conversationReadOrigin: (ctx as typeof ctx & IMessageMessageContextExtras)
           .conversationReadOrigin,
         ...(ctx.onDeliveryResult
@@ -498,7 +502,16 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
       },
       attachedResults: {
         channel: "imessage",
-        sendText: async ({ cfg, to, text, accountId, deps, replyToId }) =>
+        sendText: async ({
+          cfg,
+          to,
+          text,
+          accountId,
+          deps,
+          replyToId,
+          assertDirectAdapterHandoff,
+          onPlatformSendDispatch,
+        }) =>
           await (
             await loadIMessageChannelRuntime()
           ).sendIMessageOutbound({
@@ -508,6 +521,8 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
             accountId: accountId ?? undefined,
             deps,
             replyToId: replyToId ?? undefined,
+            assertDirectAdapterHandoff,
+            onPlatformSendDispatch,
           }),
         sendMedia: async ({
           cfg,
@@ -522,6 +537,8 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
           deps,
           replyToId,
           onDeliveryResult,
+          assertDirectAdapterHandoff,
+          onPlatformSendDispatch,
         }) =>
           await (
             await loadIMessageChannelRuntime()
@@ -537,6 +554,8 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
             accountId: accountId ?? undefined,
             deps,
             replyToId: replyToId ?? undefined,
+            assertDirectAdapterHandoff,
+            onPlatformSendDispatch,
             ...(onDeliveryResult
               ? {
                   onDeliveryResult: async (result) => {
