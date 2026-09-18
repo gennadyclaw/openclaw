@@ -450,6 +450,7 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
         replyToId,
         currentMessageId,
         replyToCurrent,
+        replyToIsExplicit,
         replyDelivery,
       }) => {
         const account = resolveIMessageAccount({ cfg, accountId });
@@ -457,12 +458,19 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
           return { replyToId: null };
         }
         const existingReplyToId = normalizeOptionalString(replyToId);
+        const explicitCurrentReply = replyToIsExplicit === true && replyToCurrent === true;
         // Queued replies carry the originating message separately from explicit reply targets.
         const implicitReplyToId =
-          replyToCurrent === false || replyDelivery?.replyToMode === "off"
+          replyToCurrent === false ||
+          (replyDelivery?.replyToMode === "off" && !explicitCurrentReply)
             ? undefined
             : normalizeOptionalString(currentMessageId);
-        return { replyToId: existingReplyToId ?? implicitReplyToId ?? null };
+        return {
+          replyToId: existingReplyToId ?? implicitReplyToId ?? null,
+          ...(!existingReplyToId && !explicitCurrentReply && implicitReplyToId
+            ? { replyToIdSource: "implicit" as const }
+            : {}),
+        };
       },
     },
     outbound: {
