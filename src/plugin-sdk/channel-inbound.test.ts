@@ -1,7 +1,8 @@
 /**
  * Tests channel inbound context and dispatch helper behavior.
  */
-import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, onTestFinished, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import {
   configureChannelAdmissionEvidenceCollection,
@@ -9,6 +10,7 @@ import {
 } from "../channels/message-access/admission-evidence.js";
 import { recordInboundSession } from "../channels/session.js";
 import { loadSessionEntry, replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
+import { sessionChanges } from "../sessions/session-row-changes.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import {
@@ -113,6 +115,19 @@ describe("channel-inbound public helpers", () => {
       { storePath, sessionKey: staleSessionKey },
       { sessionId: "published-inbound-stale", updatedAt: 1 },
     );
+    const archived = createDeferred<ReturnType<typeof loadSessionEntry>>();
+    // Observe the real worker's committed row, not a host-speed polling window.
+    onTestFinished(
+      sessionChanges.subscribe((change) => {
+        if (!("sessionKey" in change) || change.sessionKey !== staleSessionKey) {
+          return;
+        }
+        const entry = loadSessionEntry({ storePath, sessionKey: staleSessionKey });
+        if (entry?.archivedAt !== undefined) {
+          archived.resolve(entry);
+        }
+      }),
+    );
     let staleEntryAtDispatch: ReturnType<typeof loadSessionEntry>;
     const { runChannelInboundEvent } = await import("openclaw/plugin-sdk/channel-inbound");
 
@@ -163,12 +178,10 @@ describe("channel-inbound public helpers", () => {
     expect(result.dispatched).toBe(true);
     expect(staleEntryAtDispatch).toMatchObject({ sessionId: "published-inbound-stale" });
     expect(staleEntryAtDispatch?.archivedAt).toBeUndefined();
-    await vi.waitFor(() => {
-      expect(loadSessionEntry({ storePath, sessionKey: staleSessionKey })).toMatchObject({
-        sessionId: "published-inbound-stale",
-        updatedAt: 1,
-        archivedAt: expect.any(Number),
-      });
+    expect(await archived.promise).toMatchObject({
+      sessionId: "published-inbound-stale",
+      updatedAt: 1,
+      archivedAt: expect.any(Number),
     });
   });
 
