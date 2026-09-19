@@ -11,6 +11,7 @@ import {
   resolveSqliteScope,
   runExclusiveSqliteSessionWrite,
 } from "../config/sessions/session-accessor.sqlite-scope.js";
+import { racePromiseWithAbortSignal } from "../infra/abort-signal.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
 import { listOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.test-support.js";
 import { clearCronJobActive, markCronJobActive } from "./active-jobs.js";
@@ -90,6 +91,16 @@ afterEach(() => {
 });
 
 describe("CronService.remove session cleanup", () => {
+  let cleanupInFlight: Promise<unknown> | undefined;
+
+  afterEach(async () => {
+    // This nested hook drains writes before the parent closes SQLite and deletes stores.
+    if (cleanupInFlight) {
+      await Promise.allSettled([cleanupInFlight]);
+      cleanupInFlight = undefined;
+    }
+  });
+
   it("does not materialize a session database when the deleted job never ran", async () => {
     const { storePath } = await makeStorePath();
     const sessionStorePath = path.join(path.dirname(storePath), "sessions.json");
@@ -291,7 +302,7 @@ describe("CronService.remove session cleanup", () => {
     ).toBe("transport-session");
   });
 
-  it("removes a base session recreated by an already-admitted run", async () => {
+  it("removes a base session recreated by an already-admitted run", async ({ signal }) => {
     const { storePath } = await makeStorePath();
     const sessionStorePath = path.join(path.dirname(storePath), "sessions.json");
     const cron = new CronService({
@@ -333,11 +344,25 @@ describe("CronService.remove session cleanup", () => {
       { agentId: "main", storePath: sessionStorePath, sessionKey },
       { sessionId: "late-session", updatedAt: Date.now() },
     );
+    const cleanupFinished = createDeferred();
+    const cleanup = gatewayTestState.callGateway.getMockImplementation();
+    if (!cleanup) {
+      throw new Error("Gateway cleanup fixture is not installed");
+    }
+    gatewayTestState.callGateway.mockImplementationOnce(async (...args) => {
+      try {
+        cleanupInFlight = Promise.resolve().then(() => cleanup(...args));
+        return await cleanupInFlight;
+      } finally {
+        cleanupFinished.resolve();
+      }
+    });
+    cleanupInFlight = cleanupFinished.promise;
     clearCronJobActive(job.id, marker);
 
-    await vi.waitFor(() => {
-      expect(loadExactSessionEntry({ storePath: sessionStorePath, sessionKey })).toBeUndefined();
-    });
+    // Inactive callbacks start cleanup without awaiting its real lifecycle mutation.
+    await racePromiseWithAbortSignal(cleanupFinished.promise, signal);
+    expect(loadExactSessionEntry({ storePath: sessionStorePath, sessionKey })).toBeUndefined();
   });
 
   it("preserves the session of a replacement job with the same id", async () => {
