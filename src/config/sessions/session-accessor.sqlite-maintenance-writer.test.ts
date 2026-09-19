@@ -3,11 +3,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { trackSqliteStatementExecutions } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { recordInboundSession } from "../../channels/session.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import {
   beginSessionWorkAdmission,
   isSessionLifecycleMutationActive,
   runExclusiveSessionLifecycleMutation,
 } from "../../sessions/session-lifecycle-admission.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -322,7 +324,7 @@ it("releases the store writer before maintenance archive sizing completes", asyn
   expect(writerCompletedBeforeMaterialization).toBe(true);
 });
 
-it("does not hold channel recording behind automatic session maintenance", async () => {
+it("does not hold channel recording behind automatic session maintenance", async ({ signal }) => {
   const tempDir = tempDirs.make("openclaw-session-maintenance-ingress-");
   const storePath = path.join(tempDir, "agents", "main", "sessions", "sessions.json");
   const staleSessionKey = "agent:main:subagent:maintenance-ingress-stale";
@@ -330,6 +332,33 @@ it("does not hold channel recording behind automatic session maintenance", async
     { sessionKey: staleSessionKey, storePath },
     { sessionId: "maintenance-ingress-stale", updatedAt: 1 },
   );
+
+  const laterStaleSessionKey = "agent:main:subagent:maintenance-ingress-later-stale";
+  const laterMaintenanceFinished = createDeferredCore();
+  const maintenance = await import("./session-accessor.sqlite-maintenance.js");
+  const finalize = maintenance.finalizeSessionEntryMaintenancePlansAfterWriterReleaseBestEffort;
+  // Observe the actual later plan's settlement, not the desired row contents.
+  vi.spyOn(
+    maintenance,
+    "finalizeSessionEntryMaintenancePlansAfterWriterReleaseBestEffort",
+  ).mockImplementation(async (...args) => {
+    const includesLaterEntry = args[1].some((plan) =>
+      plan.entryRemovals.some((removal) => removal.sessionKey === laterStaleSessionKey),
+    );
+    try {
+      const result = await finalize(...args);
+      if (includesLaterEntry) {
+        laterMaintenanceFinished.resolve();
+      }
+      return result;
+    } catch (error) {
+      if (includesLaterEntry) {
+        laterMaintenanceFinished.reject(error);
+      }
+      throw error;
+    }
+  });
+  void laterMaintenanceFinished.promise.catch(() => {});
 
   let signalMaterializationStarted = () => {};
   const materializationStarted = new Promise<void>((resolve) => {
@@ -369,7 +398,6 @@ it("does not hold channel recording behind automatic session maintenance", async
     entryWrite.then(() => "entry-write" as const),
     materializationStarted.then(() => "maintenance" as const),
   ]);
-  const laterStaleSessionKey = "agent:main:subagent:maintenance-ingress-later-stale";
   if (firstCompleted === "entry-write") {
     await materializationStarted;
     replaceSessionEntrySync(
@@ -402,12 +430,11 @@ it("does not hold channel recording behind automatic session maintenance", async
   await entryWrite;
 
   expect(firstCompleted).toBe("entry-write");
-  await vi.waitFor(() => {
-    expect(loadSessionEntry({ sessionKey: staleSessionKey, storePath })).toBeUndefined();
-    if (firstCompleted === "entry-write") {
-      expect(loadSessionEntry({ sessionKey: laterStaleSessionKey, storePath })).toBeUndefined();
-    }
-  });
+  await racePromiseWithAbortSignal(laterMaintenanceFinished.promise, signal);
+  expect(loadSessionEntry({ sessionKey: staleSessionKey, storePath })).toBeUndefined();
+  if (firstCompleted === "entry-write") {
+    expect(loadSessionEntry({ sessionKey: laterStaleSessionKey, storePath })).toBeUndefined();
+  }
 });
 
 it.each([
