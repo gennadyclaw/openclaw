@@ -26,10 +26,7 @@ import {
 } from "./session-accessor.js";
 import { readSessionStateDeleteSnapshot } from "./session-accessor.sqlite-delete-snapshot.js";
 import { deleteSessionEntryRows } from "./session-accessor.sqlite-entry-store.js";
-import {
-  applySessionEntryMaintenance,
-  refreshSqliteSessionPlannerStatisticsBestEffort,
-} from "./session-accessor.sqlite-maintenance.js";
+import * as maintenance from "./session-accessor.sqlite-maintenance.js";
 import * as reclamationCommit from "./session-accessor.sqlite-reclamation-commit.js";
 import { resolveSqliteTargetFromSessionStorePath } from "./session-sqlite-target.js";
 import { registerSessionMaintenancePreserveKeysProvider } from "./store-maintenance-preserve.js";
@@ -97,7 +94,7 @@ it("avoids inventory projection for sequential writes with no retention candidat
       });
       const plan = runOpenClawAgentWriteTransaction(
         (owner) =>
-          applySessionEntryMaintenance(owner, {
+          maintenance.applySessionEntryMaintenance(owner, {
             activeSessionKey: target.sessionKey,
             archiveDirectory: path.join(path.dirname(database.path), "archives"),
             maintenanceConfig: resolveMaintenanceConfigFromInput(),
@@ -145,7 +142,7 @@ it.each([false, true])(
         run: async () => {
           const plan = runOpenClawAgentWriteTransaction(
             (owner) =>
-              applySessionEntryMaintenance(owner, {
+              maintenance.applySessionEntryMaintenance(owner, {
                 activeSessionKey: key(3),
                 archiveDirectory: path.join(path.dirname(database.path), "archives"),
                 maintenanceConfig: {
@@ -187,7 +184,7 @@ it.each(["session-key", "session-id"] as const)(
     const maintain = (forceMaintenance = false) =>
       runOpenClawAgentWriteTransaction(
         (owner) =>
-          applySessionEntryMaintenance(owner, {
+          maintenance.applySessionEntryMaintenance(owner, {
             forceMaintenance,
             archiveDirectory: path.join(path.dirname(database.path), "archives"),
             maintenanceConfig: resolveMaintenanceConfigFromInput(),
@@ -328,37 +325,34 @@ it("does not hold channel recording behind automatic session maintenance", async
   const tempDir = tempDirs.make("openclaw-session-maintenance-ingress-");
   const storePath = path.join(tempDir, "agents", "main", "sessions", "sessions.json");
   const staleSessionKey = "agent:main:subagent:maintenance-ingress-stale";
-  replaceSessionEntrySync(
-    { sessionKey: staleSessionKey, storePath },
-    { sessionId: "maintenance-ingress-stale", updatedAt: 1 },
-  );
-
   const laterStaleSessionKey = "agent:main:subagent:maintenance-ingress-later-stale";
-  const laterMaintenanceFinished = createDeferredCore();
-  const maintenance = await import("./session-accessor.sqlite-maintenance.js");
+  const finalized = createDeferredCore();
+  void finalized.promise.catch(() => {});
   const finalize = maintenance.finalizeSessionEntryMaintenancePlansAfterWriterReleaseBestEffort;
-  // Observe the actual later plan's settlement, not the desired row contents.
   vi.spyOn(
     maintenance,
     "finalizeSessionEntryMaintenancePlansAfterWriterReleaseBestEffort",
   ).mockImplementation(async (...args) => {
     const includesLaterEntry = args[1].some((plan) =>
-      plan.entryRemovals.some((removal) => removal.sessionKey === laterStaleSessionKey),
+      plan.entryRemovals.some(({ sessionKey }) => sessionKey === laterStaleSessionKey),
     );
     try {
       const result = await finalize(...args);
       if (includesLaterEntry) {
-        laterMaintenanceFinished.resolve();
+        finalized.resolve();
       }
       return result;
     } catch (error) {
       if (includesLaterEntry) {
-        laterMaintenanceFinished.reject(error);
+        finalized.reject(error);
       }
       throw error;
     }
   });
-  void laterMaintenanceFinished.promise.catch(() => {});
+  replaceSessionEntrySync(
+    { sessionKey: staleSessionKey, storePath },
+    { sessionId: "maintenance-ingress-stale", updatedAt: 1 },
+  );
 
   let signalMaterializationStarted = () => {};
   const materializationStarted = new Promise<void>((resolve) => {
@@ -430,11 +424,10 @@ it("does not hold channel recording behind automatic session maintenance", async
   await entryWrite;
 
   expect(firstCompleted).toBe("entry-write");
-  await racePromiseWithAbortSignal(laterMaintenanceFinished.promise, signal);
+  // Join the second cleanup before inspecting its writes; worker startup can exceed polling deadlines.
+  await racePromiseWithAbortSignal(finalized.promise, signal);
   expect(loadSessionEntry({ sessionKey: staleSessionKey, storePath })).toBeUndefined();
-  if (firstCompleted === "entry-write") {
-    expect(loadSessionEntry({ sessionKey: laterStaleSessionKey, storePath })).toBeUndefined();
-  }
+  expect(loadSessionEntry({ sessionKey: laterStaleSessionKey, storePath })).toBeUndefined();
 });
 
 it.each([
@@ -545,12 +538,16 @@ it("rolls back planner statistics when maintenance ownership is revoked before c
       ),
     );
 
-  await refreshSqliteSessionPlannerStatisticsBestEffort(scope, 65, { isCurrent: () => current });
+  await maintenance.refreshSqliteSessionPlannerStatisticsBestEffort(scope, 65, {
+    isCurrent: () => current,
+  });
   expect(reachedCommit).toBe(true);
   expect(readStatistics()).toEqual({ stat: expect.stringMatching(/^66\b/u) });
   authorization.mockRestore();
   current = true;
-  await refreshSqliteSessionPlannerStatisticsBestEffort(scope, 65, { isCurrent: () => current });
+  await maintenance.refreshSqliteSessionPlannerStatisticsBestEffort(scope, 65, {
+    isCurrent: () => current,
+  });
   expect(readStatistics()).toEqual({ stat: expect.stringMatching(/^1\b/u) });
   expect(database.db.prepare("PRAGMA analysis_limit").get()).toEqual({ analysis_limit: 37 });
 });
@@ -576,7 +573,7 @@ it("refreshes the retained parent query planner after worker analysis", async ()
   expect(plan()).toEqual([expect.stringContaining("maintenance_probe_b")]);
   database.db.exec("DELETE FROM maintenance_planner_probe WHERE a=1");
 
-  await refreshSqliteSessionPlannerStatisticsBestEffort(
+  await maintenance.refreshSqliteSessionPlannerStatisticsBestEffort(
     { agentId: "main", path: database.path },
     9900,
   );
