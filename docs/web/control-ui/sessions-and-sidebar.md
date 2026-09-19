@@ -123,6 +123,8 @@ In the default chip mode, the sidebar organizes everything around the active age
 
 Choose **Show all agents** in the agent switcher to enter **team mode**, which shows every selectable agent as a collapsible session group. It is off by default, and the browser remembers your choice and each agent's collapsed state. Groups start expanded. Headers emphasize the agent's avatar and name. Activity, attention, unread, and workspace indicators sit on the right of session rows; collapsed parents and agents summarize hidden work and outcomes there. A row shows each status once, even when both the parent and a hidden child share that status. Session icons stay to the left of their titles in both sidebar modes; status indicators and actions stay on the right. Nested children indent 16px per level without moving the right edge of the trailing indicators. Groups keep the configured agent order as activity changes. Agent headers are 48px tall with 36px avatars; session rows stay on one line at 32px on desktop. Each agent header is its Home entry: selecting the name or avatar opens the main conversation and highlights the header. Home does not appear again as a session row, even when pinned. The header shows Home activity, unread state, and attention while expanded, and summarizes the group's hidden sessions while collapsed. Independent conversations created from Home remain visible beneath the agent.
 
+Session-row owner avatars appear automatically when the signed-in user and session roster identify more than one human. With only one human, owner avatars stay hidden even when agents own or participate in sessions. Agent participants and undisplayed participant counts do not enable attribution. Session icons, channel avatars, and activity indicators keep their usual behavior.
+
 Observer assessments such as **stuck** or **waiting on user** stay with their session instead of opening a global toast over another conversation. This does not change explicit questions, approval requests, action feedback such as **Archive → Undo**, or completion notices for sessions you explicitly start in the background.
 
 Pending questions and approvals show their specific request when you tap, hover, or keyboard-focus the attention icon. Tapping the icon keeps the sidebar open; tap again or press Escape to dismiss the preview. The tooltip includes the oldest question, compact command, or approval title, plus a count of additional questions or approvals. This works in the regular list, Home, and team mode, including collapsed parents and agent groups. Questions and approvals take priority over agent attention notes and failed runs; requests at the same priority show the oldest first. Answering, approving, cancelling, or expiry clears that request and reveals the next one. Previews wrap and truncate without adding another line to session rows. Secret questions show only the question text, never entered answers.
@@ -250,6 +252,35 @@ With **Person** grouping, hover or focus a person’s header and choose **Show o
 ## Session colors
 
 Choose **Icon & color** from a session menu and select a color swatch to add a narrow color stripe to its sidebar row and a matching dot beside the chat title. Pick one of eight colors, or choose **Default** to clear only the color. **Reset to default** clears both the icon and color. The colors match Claude Code’s `/color` names, so imported Claude Code sessions keep the same color. Imported catalog rows show their color without offering color editing.
+
+## Command palette
+
+The command palette can start an independent task without leaving your current
+conversation or settings page. Search sessions, settings, and commands as usual,
+or write a prompt in the same field.
+
+- **Enter** opens or runs the selected result. With no result, Enter does not send.
+- **Shift+Enter** adds a line. The field grows downward to three lines, then scrolls
+  without moving the palette or its top-right controls.
+- **Command+Enter** on macOS or **Ctrl+Enter** on Windows/Linux starts a new session
+  in the background. You can also choose **New session** beside the input.
+
+Open **New session settings** beside the input to choose the agent, workspace and
+machine, or whether to use a new worktree. These controls reuse the permissions
+and device/cloud availability rules of the full New session page. Model,
+attachment, and visibility controls remain on that page.
+
+The palette starts with your usual defaults. Turn on **Remember settings** to
+reuse different choices for Cmd/Ctrl+K without changing those defaults. Clearing
+the checkbox restores your usual choices immediately and leaves the prompt
+intact. One-off choices are not remembered for the next palette session.
+
+Accepted creation closes the palette and offers **Open session** without changing
+the foreground view or its draft. A failed submission retains the prompt and
+choices with an error. These settings do not affect sessions opened from search,
+and the existing conversation composer keeps its own send and steer/queue
+shortcuts. Prompts longer than the transcript-search limit are not sent as search
+queries; they remain intact for session creation.
 
 ## New session page
 
