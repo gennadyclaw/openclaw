@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
   applySessionEntryLifecycleMutation,
@@ -17,6 +17,7 @@ import { listOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.te
 import { clearCronJobActive, markCronJobActive } from "./active-jobs.js";
 import { CronService } from "./service.js";
 import { setupCronServiceSuite } from "./service.test-harness.js";
+import * as cronCleanup from "./service/locked.js";
 
 const gatewayTestState = vi.hoisted(() => ({
   callGateway: vi.fn(),
@@ -332,6 +333,10 @@ describe("CronService.remove session cleanup", () => {
       { sessionId: "active-session", updatedAt: Date.now() },
     );
 
+    const cleanupRegistration = vi.spyOn(cronCleanup, "registerPendingCronSessionCleanup");
+    onTestFinished(() => {
+      cleanupRegistration.mockRestore();
+    });
     await expect(cron.remove(job.id)).resolves.toEqual({
       ok: true,
       removed: true,
@@ -344,24 +349,18 @@ describe("CronService.remove session cleanup", () => {
       { agentId: "main", storePath: sessionStorePath, sessionKey },
       { sessionId: "late-session", updatedAt: Date.now() },
     );
-    const cleanupFinished = createDeferred();
-    const cleanup = gatewayTestState.callGateway.getMockImplementation();
-    if (!cleanup) {
-      throw new Error("Gateway cleanup fixture is not installed");
+    const cleanupDone = cleanupRegistration.mock.calls.find(
+      ([, registeredJobId]) => registeredJobId === job.id,
+    )?.[2];
+    if (!cleanupDone) {
+      throw new Error("Cron cleanup completion was not registered");
     }
-    gatewayTestState.callGateway.mockImplementationOnce(async (...args) => {
-      try {
-        cleanupInFlight = Promise.resolve().then(() => cleanup(...args));
-        return await cleanupInFlight;
-      } finally {
-        cleanupFinished.resolve();
-      }
-    });
-    cleanupInFlight = cleanupFinished.promise;
+    cleanupInFlight = cleanupDone;
     clearCronJobActive(job.id, marker);
 
-    // Inactive callbacks start cleanup without awaiting its real lifecycle mutation.
-    await racePromiseWithAbortSignal(cleanupFinished.promise, signal);
+    // The cron owner releases pending cleanup after the real lifecycle mutation settles.
+    await racePromiseWithAbortSignal(cleanupDone, signal);
+    expect(cronCleanup.hasPendingCronSessionCleanupForAgent("main")).toBe(false);
     expect(loadExactSessionEntry({ storePath: sessionStorePath, sessionKey })).toBeUndefined();
   });
 
