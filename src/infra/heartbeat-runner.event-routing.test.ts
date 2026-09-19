@@ -328,7 +328,9 @@ describe("Heartbeat event routing", () => {
           coalesceMs: 0,
         });
         // The exec wake settles before its separately scheduled cron follow-up.
-        await racePromiseWithAbortSignal(followup.promise, signal);
+        await expect(racePromiseWithAbortSignal(followup.promise, signal)).resolves.toMatchObject({
+          status: "ran",
+        });
         expect(replySpy).toHaveBeenCalledTimes(2);
         expect(
           replySpy.mock.calls.map(([ctx]) => [ctx.AgentId, ctx.SessionKey, ctx.InternalTurnSource]),
